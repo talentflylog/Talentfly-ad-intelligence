@@ -40,12 +40,14 @@ export default function Home() {
   const [publishLoading, setPublishLoading] = useState(false);
   const [publishLogs, setPublishLogs] = useState([]);
 
+  const [apiError, setApiError] = useState(null);
+
   const addLog = (msg, type = 'info') => setLogs(l => [...l, { msg, type, time: new Date().toLocaleTimeString() }]);
 
   // ---- FETCH ADS ----
   const fetchAds = async (useKeyword = false) => {
-    setLoading(true); setLogs([]); setAds([]);
-    addLog(useKeyword ? `Keyword search: "${keyword}"` : 'Fetching competitor ads...', 'info');
+    setLoading(true); setLogs([]); setAds([]); setApiError(null);
+    addLog(useKeyword ? `Keyword search: "${keyword}"` : 'Fetching competitor ads from Meta Ad Library...', 'info');
     try {
       const res = await fetch('/api/competitor-ads', {
         method: 'POST',
@@ -57,10 +59,16 @@ export default function Home() {
         })
       });
       const data = await res.json();
+      if (data.api_blocked) {
+        setApiError(data);
+        addLog(`❌ Meta API blocked: ${data.raw_error?.message || data.diagnosis}`, 'error');
+        return;
+      }
       if (data.error) { addLog(`Error: ${data.error}`, 'error'); return; }
       setAds(data.ads || []);
       setSource(data.source);
-      addLog(`✅ ${data.count} ads loaded (${data.source === 'ai' ? '🤖 AI Analysis' : '📡 Live Meta API'})`, 'success');
+      addLog(`✅ ${data.count} REAL ads loaded from Meta Ad Library`, 'success');
+      if (data.partial_errors?.length) addLog(`⚠️ ${data.partial_errors.length} searches had errors`, 'warn');
       setTimeout(() => adsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (e) { addLog(`Error: ${e.message}`, 'error'); }
     finally { setLoading(false); }
@@ -211,11 +219,52 @@ export default function Home() {
 
             {loading && <div style={{textAlign:'center',padding:40}}><div className="spinner"></div><div className="mono" style={{color:'#6b6b80',marginTop:12,fontSize:'0.82rem'}}>Fetching ads...</div></div>}
 
+            {/* API BLOCKED ERROR PANEL */}
+            {apiError && (
+              <div style={{background:'#1a0a0a',border:'2px solid #ff6584',borderRadius:12,padding:24,marginBottom:20}}>
+                <div className="syne" style={{fontWeight:800,color:'#ff6584',fontSize:'1.1rem',marginBottom:4}}>❌ Meta Ad Library API Blocked</div>
+                <div className="mono" style={{fontSize:'0.78rem',color:'#ff9eb0',marginBottom:16}}>Token: {apiError.token_preview}</div>
+
+                <div style={{background:'rgba(255,101,132,0.1)',borderRadius:8,padding:'12px 16px',marginBottom:14}}>
+                  <div className="mono" style={{fontSize:'0.72rem',color:'#ff6584',marginBottom:6}}>EXACT ERROR FROM META API</div>
+                  <div style={{fontSize:'0.85rem',color:'#ffccd5'}}>{apiError.raw_error?.message || apiError.diagnosis}</div>
+                  {apiError.raw_error?.code && <div className="mono" style={{fontSize:'0.72rem',color:'#ff6584',marginTop:4}}>Code: {apiError.raw_error.code} · Type: {apiError.raw_error.type}</div>}
+                </div>
+
+                <div style={{background:'rgba(255,209,102,0.08)',border:'1px solid rgba(255,209,102,0.3)',borderRadius:8,padding:'12px 16px',marginBottom:16}}>
+                  <div className="mono" style={{fontSize:'0.72rem',color:'#ffd166',marginBottom:6}}>🔧 HOW TO FIX</div>
+                  <div style={{fontSize:'0.85rem',color:'#ffd166',lineHeight:1.6}}>{apiError.fix}</div>
+                </div>
+
+                <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                  <a href="https://www.facebook.com/ads/library/api" target="_blank" rel="noreferrer"
+                    style={{padding:'10px 18px',background:'#1877F2',color:'white',borderRadius:8,textDecoration:'none',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem'}}>
+                    📋 Apply for Ad Library API Access
+                  </a>
+                  <a href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noreferrer"
+                    style={{padding:'10px 18px',background:'transparent',border:'1px solid #2a2a3a',color:'#e8e8f0',borderRadius:8,textDecoration:'none',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem'}}>
+                    🔑 Refresh Access Token
+                  </a>
+                  <a href="https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&search_type=keyword_unordered&media_type=all" target="_blank" rel="noreferrer"
+                    style={{padding:'10px 18px',background:'transparent',border:'1px solid #2a2a3a',color:'#e8e8f0',borderRadius:8,textDecoration:'none',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem'}}>
+                    🔍 Browse Ad Library Manually
+                  </a>
+                </div>
+
+                <div style={{marginTop:16,padding:'10px 14px',background:'rgba(255,255,255,0.03)',borderRadius:8,fontSize:'0.78rem',color:'#6b6b80',lineHeight:1.6}}>
+                  <strong style={{color:'#e8e8f0'}}>Why is this happening?</strong> Meta's Ad Library API requires two separate approvals:
+                  (1) <code style={{color:'#a09fff'}}>ads_read</code> permission — you have this ✅
+                  (2) <strong>Ad Library API special access</strong> — this needs a separate form at facebook.com/ads/library/api ⏳<br/>
+                  Once approved, all real competitor ads will appear here automatically.
+                </div>
+              </div>
+            )}
+
             {ads.length > 0 && (
               <div ref={adsRef}>
                 <div className="card" style={{marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                  <div><span className="syne" style={{fontWeight:700,fontSize:'1.1rem'}}>{ads.length} Competitor Ads Found</span>
-                  <span className="tag tag-purple mono" style={{marginLeft:10}}>{source === 'ai' ? '🤖 AI Analysis' : '📡 Live Meta API'}</span></div>
+                  <div><span className="syne" style={{fontWeight:700,fontSize:'1.1rem'}}>{ads.length} Real Ads Found</span>
+                  <span className="tag tag-green mono" style={{marginLeft:10}}>📡 Live from Meta Ad Library</span></div>
                   <button className="btn btn-outline" style={{fontSize:'0.78rem'}} onClick={() => setTab('analysis')}>📊 View Analysis →</button>
                 </div>
                 {ads.map((ad, i) => {
@@ -243,42 +292,46 @@ export default function Home() {
                       </div>
 
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:0}}>
-                        {/* LEFT: Facebook Ad Preview */}
+                        {/* LEFT: Ad Content + Direct Library Link */}
                         <div style={{padding:20,borderRight:'1px solid #2a2a3a'}}>
-                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>📱 Facebook Ad Preview</div>
-                          <div style={{background:'white',borderRadius:10,overflow:'hidden',boxShadow:'0 2px 16px rgba(0,0,0,0.4)',maxWidth:380}}>
-                            {/* FB Header */}
+                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>📱 Ad Creative</div>
+
+                          {/* Simulated ad card */}
+                          <div style={{background:'white',borderRadius:10,overflow:'hidden',boxShadow:'0 2px 16px rgba(0,0,0,0.4)',maxWidth:380,marginBottom:14}}>
                             <div style={{padding:'10px 14px',display:'flex',alignItems:'center',gap:8}}>
                               <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#6c63ff,#ff6584)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:800,fontSize:'0.8rem',flexShrink:0}}>{initials}</div>
                               <div style={{flex:1}}>
                                 <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.85rem'}}>{ad._competitor}</div>
                                 <div style={{color:'#65676b',fontSize:'0.7rem'}}>Sponsored · 🌐</div>
                               </div>
-                              <div style={{color:'#65676b',fontSize:'1.1rem'}}>···</div>
                             </div>
-                            {/* Body */}
                             <div style={{padding:'0 14px 10px',color:'#1c1e21',fontSize:'0.82rem',lineHeight:1.5,fontFamily:'system-ui,sans-serif'}}>{body}</div>
-                            {/* Image area */}
-                            <div style={{background:'linear-gradient(135deg,#1a0533 0%,#0a1628 50%,#0d1117 100%)',minHeight:160,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'white',textAlign:'center',padding:20,position:'relative',overflow:'hidden'}}>
-                              <div style={{position:'absolute',inset:0,background:'radial-gradient(ellipse at 50% 30%,rgba(108,99,255,0.3),transparent 70%)'}}></div>
-                              <div style={{fontSize:'1.8rem',marginBottom:8,position:'relative'}}>🎓</div>
-                              <div style={{fontWeight:800,fontSize:'1rem',lineHeight:1.3,position:'relative',fontFamily:'system-ui,sans-serif'}}>{headline}</div>
-                              <div style={{fontSize:'0.72rem',opacity:0.7,marginTop:6,position:'relative'}}>{ad._competitor}</div>
+                            <div style={{background:'linear-gradient(135deg,#1a0533,#0a1628)',minHeight:140,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'white',textAlign:'center',padding:16}}>
+                              <div style={{fontSize:'1.6rem',marginBottom:6}}>🎓</div>
+                              <div style={{fontWeight:800,fontSize:'0.95rem',lineHeight:1.3,fontFamily:'system-ui,sans-serif'}}>{headline}</div>
                             </div>
-                            {/* Footer */}
                             <div style={{background:'#f0f2f5',padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                              <div>
-                                <div style={{color:'#65676b',fontSize:'0.68rem',textTransform:'uppercase'}}>{ad._competitor.toLowerCase().replace(/ /g,'')}.com</div>
-                                <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.82rem'}}>{headline.slice(0,38)}{headline.length>38?'...':''}</div>
-                              </div>
-                              <div style={{background:'#e4e6eb',color:'#1c1e21',padding:'6px 12px',borderRadius:6,fontSize:'0.78rem',fontWeight:600,whiteSpace:'nowrap',marginLeft:8,flexShrink:0}}>Learn More</div>
-                            </div>
-                            {/* Reactions */}
-                            <div style={{padding:'6px 14px',display:'flex',justifyContent:'space-between',color:'#65676b',fontSize:'0.75rem',borderTop:'1px solid #e4e6eb'}}>
-                              <span>👍 ❤️ 😮 &nbsp;{Math.floor((i+1)*127+83)}</span>
-                              <span>{Math.floor((i+1)*23+12)} comments</span>
+                              <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.8rem'}}>{headline.slice(0,35)}{headline.length>35?'...':''}</div>
+                              <div style={{background:'#e4e6eb',color:'#1c1e21',padding:'5px 10px',borderRadius:6,fontSize:'0.75rem',fontWeight:600,flexShrink:0,marginLeft:8}}>Learn More</div>
                             </div>
                           </div>
+
+                          {/* View real ad button — uses snapshot_url if real, else searches by competitor name */}
+                          <a
+                            href={ad.ad_snapshot_url && ad.ad_snapshot_url !== '#'
+                              ? ad.ad_snapshot_url
+                              : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=${encodeURIComponent(ad._competitor||'')}&search_type=keyword_unordered&media_type=all`}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'11px',borderRadius:8,background:'#1877F2',color:'white',textDecoration:'none',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem',width:'100%'}}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                            {ad.ad_snapshot_url && ad.ad_snapshot_url !== '#' ? '👁 View This Exact Ad on Facebook' : '🔍 Search This Competitor on Ad Library'}
+                          </a>
+                          {ad._ai_generated && (
+                            <div style={{marginTop:8,padding:'7px 10px',background:'rgba(108,99,255,0.1)',border:'1px solid rgba(108,99,255,0.2)',borderRadius:6,fontSize:'0.72rem',color:'#a09fff',textAlign:'center'}}>
+                              🤖 AI-generated profile · Link opens Ad Library search for this competitor
+                            </div>
+                          )}
                         </div>
 
                         {/* RIGHT: Full Intelligence */}
@@ -336,7 +389,7 @@ export default function Home() {
                             <button style={{width:'100%',padding:'10px',borderRadius:8,border:'none',cursor:'pointer',background:'linear-gradient(135deg,#7B2FBE,#00C4CC)',color:'white',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem'}} onClick={() => setPosterAd(ad)}>🎨 Create Canva Poster from This Ad</button>
                             <div style={{display:'flex',gap:8}}>
                               <button className="btn btn-primary" style={{flex:1,fontSize:'0.8rem'}} onClick={() => copyToPublish(ad)}>📋 Copy & Publish</button>
-                              <button className="btn btn-outline" style={{flex:1,fontSize:'0.8rem'}} onClick={() => { const n=encodeURIComponent(ad._competitor||''); window.open(`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=${n}&search_type=keyword_unordered`,'_blank'); }}>🔗 Ad Library</button>
+                              <button className="btn btn-outline" style={{flex:1,fontSize:'0.8rem'}} onClick={() => { const url = ad.ad_snapshot_url && ad.ad_snapshot_url !== '#' ? ad.ad_snapshot_url : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=${encodeURIComponent(ad._competitor||'')}&search_type=keyword_unordered&media_type=all`; window.open(url,'_blank'); }}>🔗 View on FB</button>
                             </div>
                           </div>
                         </div>
