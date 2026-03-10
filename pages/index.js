@@ -1,6 +1,6 @@
 // pages/index.js — Talentfly Ad Intelligence Platform
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Head from 'next/head';
 
 const COMPETITORS_DEFAULT = `Reliant Institute of Logistics
@@ -19,6 +19,7 @@ export default function Home() {
   const [source, setSource] = useState('');
   const [selectedAd, setSelectedAd] = useState(null);
   const [posterAd, setPosterAd] = useState(null);
+  const adsRef = useRef(null);
 
   // Creative generator
   const [brand, setBrand] = useState('Talentfly Ads');
@@ -60,6 +61,7 @@ export default function Home() {
       setAds(data.ads || []);
       setSource(data.source);
       addLog(`✅ ${data.count} ads loaded (${data.source === 'ai' ? '🤖 AI Analysis' : '📡 Live Meta API'})`, 'success');
+      setTimeout(() => adsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (e) { addLog(`Error: ${e.message}`, 'error'); }
     finally { setLoading(false); }
   };
@@ -210,47 +212,138 @@ export default function Home() {
             {loading && <div style={{textAlign:'center',padding:40}}><div className="spinner"></div><div className="mono" style={{color:'#6b6b80',marginTop:12,fontSize:'0.82rem'}}>Fetching ads...</div></div>}
 
             {ads.length > 0 && (
-              <div>
-                <div className="card" style={{marginBottom:16}}>
-                  <span className="syne" style={{fontWeight:700}}>{ads.length} Ads Found</span>
-                  <span className="tag tag-purple mono" style={{marginLeft:10}}>{source === 'ai' ? '🤖 AI Analysis' : '📡 Live Meta API'}</span>
+              <div ref={adsRef}>
+                <div className="card" style={{marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <div><span className="syne" style={{fontWeight:700,fontSize:'1.1rem'}}>{ads.length} Competitor Ads Found</span>
+                  <span className="tag tag-purple mono" style={{marginLeft:10}}>{source === 'ai' ? '🤖 AI Analysis' : '📡 Live Meta API'}</span></div>
+                  <button className="btn btn-outline" style={{fontSize:'0.78rem'}} onClick={() => setTab('analysis')}>📊 View Analysis →</button>
                 </div>
-                <div className="grid2">
-                  {ads.map((ad, i) => {
-                    const headline = (ad.ad_creative_link_titles || [])[0] || 'No headline';
-                    const body = (ad.ad_creative_bodies || [])[0] || '';
-                    const days = daysRunning(ad);
-                    return (
-                      <div key={i} className="ad-card">
-                        <div style={{padding:'14px 16px',borderBottom:'1px solid #2a2a3a',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                {ads.map((ad, i) => {
+                  const headline = (ad.ad_creative_link_titles || [])[0] || 'No headline';
+                  const body = (ad.ad_creative_bodies || [])[0] || '';
+                  const days = daysRunning(ad);
+                  const initials = (ad._competitor||'A').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+                  const startDate = ad.ad_delivery_start_time ? new Date(ad.ad_delivery_start_time).toLocaleDateString('en-IN') : 'Unknown';
+                  return (
+                    <div key={i} style={{background:'#111118',border:`1px solid ${days>=14?'#ffd16644':'#2a2a3a'}`,borderRadius:14,marginBottom:24,overflow:'hidden',boxShadow:days>=14?'0 0 20px rgba(255,209,102,0.08)':'none'}}>
+                      {/* Card Header */}
+                      <div style={{padding:'16px 20px',borderBottom:'1px solid #2a2a3a',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#0f0f18'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:12}}>
+                          <div style={{width:44,height:44,borderRadius:'50%',background:'linear-gradient(135deg,#6c63ff,#ff6584)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:800,fontSize:'1rem',flexShrink:0}}>{initials}</div>
                           <div>
-                            <div className="syne" style={{fontWeight:700,fontSize:'0.9rem'}}>{ad._competitor}</div>
-                            <div className="mono" style={{fontSize:'0.7rem',color:'#6b6b80',marginTop:3}}>{days}d running · {(ad.publisher_platforms||['facebook']).join(', ')}</div>
-                          </div>
-                          <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
-                            {days >= 14 && <span className="tag tag-orange">🏆 WINNER</span>}
-                            {ad._ai_generated && <span className="tag tag-purple">🤖 AI</span>}
+                            <div className="syne" style={{fontWeight:700,fontSize:'1rem'}}>{ad._competitor}</div>
+                            <div className="mono" style={{fontSize:'0.7rem',color:'#6b6b80',marginTop:2}}>Started {startDate} · Running {days} days · {(ad.publisher_platforms||['facebook']).join(' + ')}</div>
                           </div>
                         </div>
-                        <div style={{padding:'14px 16px'}}>
-                          <div className="syne" style={{fontWeight:700,marginBottom:6,fontSize:'0.95rem'}}>{headline}</div>
-                          <div style={{fontSize:'0.82rem',color:'#6b6b80',lineHeight:1.6,marginBottom:10}}>{body.slice(0,160)}{body.length>160?'...':''}</div>
-                          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
-                            <span className="tag mono" style={{background:'rgba(255,255,255,0.05)',color:'#6b6b80'}}>💰 {fmtSpend(ad)}</span>
-                            <span className="tag mono" style={{background:'rgba(255,255,255,0.05)',color:'#6b6b80'}}>👁 {fmtImpressions(ad)}</span>
-                            {ad._hook_type && <span className="tag mono" style={{background:'rgba(255,255,255,0.05)',color:'#6b6b80'}}>🎯 {ad._hook_type}</span>}
-                          </div>
-                          {ad._winning_reason && <div style={{padding:'8px 10px',background:'rgba(255,209,102,0.07)',borderLeft:'3px solid #ffd166',borderRadius:4,fontSize:'0.76rem',color:'#ffd166',marginBottom:10}}>💡 {ad._winning_reason}</div>}
-                        </div>
-                        <div style={{padding:'10px 16px',borderTop:'1px solid #2a2a3a',display:'flex',gap:8}}>
-                          <button className="btn btn-outline" style={{fontSize:'0.75rem',padding:'5px 10px'}} onClick={() => setSelectedAd(ad)}>🖼 Preview</button>
-                          <button className="btn btn-outline" style={{fontSize:'0.75rem',padding:'5px 10px'}} onClick={() => { setPosterAd(ad); }}>🎨 Canva Poster</button>
-                          <button className="btn btn-primary" style={{fontSize:'0.75rem',padding:'5px 10px'}} onClick={() => copyToPublish(ad)}>📋 Copy & Publish</button>
+                        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                          {days >= 14 && <span className="tag tag-orange">🏆 WINNER</span>}
+                          {ad._ai_generated && <span className="tag tag-purple">🤖 AI</span>}
+                          {ad._hook_type && <span className="tag" style={{background:'rgba(108,99,255,0.15)',color:'#a09fff',border:'1px solid rgba(108,99,255,0.3)',textTransform:'capitalize'}}>{ad._hook_type.replace('_',' ')}</span>}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:0}}>
+                        {/* LEFT: Facebook Ad Preview */}
+                        <div style={{padding:20,borderRight:'1px solid #2a2a3a'}}>
+                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>📱 Facebook Ad Preview</div>
+                          <div style={{background:'white',borderRadius:10,overflow:'hidden',boxShadow:'0 2px 16px rgba(0,0,0,0.4)',maxWidth:380}}>
+                            {/* FB Header */}
+                            <div style={{padding:'10px 14px',display:'flex',alignItems:'center',gap:8}}>
+                              <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#6c63ff,#ff6584)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:800,fontSize:'0.8rem',flexShrink:0}}>{initials}</div>
+                              <div style={{flex:1}}>
+                                <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.85rem'}}>{ad._competitor}</div>
+                                <div style={{color:'#65676b',fontSize:'0.7rem'}}>Sponsored · 🌐</div>
+                              </div>
+                              <div style={{color:'#65676b',fontSize:'1.1rem'}}>···</div>
+                            </div>
+                            {/* Body */}
+                            <div style={{padding:'0 14px 10px',color:'#1c1e21',fontSize:'0.82rem',lineHeight:1.5,fontFamily:'system-ui,sans-serif'}}>{body}</div>
+                            {/* Image area */}
+                            <div style={{background:'linear-gradient(135deg,#1a0533 0%,#0a1628 50%,#0d1117 100%)',minHeight:160,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'white',textAlign:'center',padding:20,position:'relative',overflow:'hidden'}}>
+                              <div style={{position:'absolute',inset:0,background:'radial-gradient(ellipse at 50% 30%,rgba(108,99,255,0.3),transparent 70%)'}}></div>
+                              <div style={{fontSize:'1.8rem',marginBottom:8,position:'relative'}}>🎓</div>
+                              <div style={{fontWeight:800,fontSize:'1rem',lineHeight:1.3,position:'relative',fontFamily:'system-ui,sans-serif'}}>{headline}</div>
+                              <div style={{fontSize:'0.72rem',opacity:0.7,marginTop:6,position:'relative'}}>{ad._competitor}</div>
+                            </div>
+                            {/* Footer */}
+                            <div style={{background:'#f0f2f5',padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                              <div>
+                                <div style={{color:'#65676b',fontSize:'0.68rem',textTransform:'uppercase'}}>{ad._competitor.toLowerCase().replace(/ /g,'')}.com</div>
+                                <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.82rem'}}>{headline.slice(0,38)}{headline.length>38?'...':''}</div>
+                              </div>
+                              <div style={{background:'#e4e6eb',color:'#1c1e21',padding:'6px 12px',borderRadius:6,fontSize:'0.78rem',fontWeight:600,whiteSpace:'nowrap',marginLeft:8,flexShrink:0}}>Learn More</div>
+                            </div>
+                            {/* Reactions */}
+                            <div style={{padding:'6px 14px',display:'flex',justifyContent:'space-between',color:'#65676b',fontSize:'0.75rem',borderTop:'1px solid #e4e6eb'}}>
+                              <span>👍 ❤️ 😮 &nbsp;{Math.floor((i+1)*127+83)}</span>
+                              <span>{Math.floor((i+1)*23+12)} comments</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* RIGHT: Full Intelligence */}
+                        <div style={{padding:20,display:'flex',flexDirection:'column',gap:14}}>
+                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',textTransform:'uppercase',letterSpacing:'0.05em'}}>📊 Ad Intelligence</div>
+
+                          {/* Metrics grid */}
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                            {[
+                              ['💰 Est. Spend',fmtSpend(ad),'#43e97b'],
+                              ['👁 Impressions',fmtImpressions(ad),'#6c63ff'],
+                              ['📅 Days Running',`${days} days`,'#ffd166'],
+                              ['📱 Platforms',(ad.publisher_platforms||['facebook']).join(', '),'#ff6584'],
+                            ].map(([k,v,c])=>(
+                              <div key={k} style={{background:'#1a1a24',borderRadius:8,padding:'10px 12px'}}>
+                                <div style={{fontSize:'0.7rem',color:'#6b6b80',marginBottom:4}}>{k}</div>
+                                <div className="syne" style={{fontWeight:700,fontSize:'0.9rem',color:c}}>{v}</div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Full ad copy */}
+                          <div style={{background:'#1a1a24',borderRadius:8,padding:'12px 14px'}}>
+                            <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:6}}>FULL AD COPY</div>
+                            <div className="syne" style={{fontWeight:700,fontSize:'0.9rem',marginBottom:6,color:'#e8e8f0'}}>{headline}</div>
+                            <div style={{fontSize:'0.82rem',color:'rgba(232,232,240,0.8)',lineHeight:1.6}}>{body}</div>
+                          </div>
+
+                          {/* Winning reason */}
+                          {ad._winning_reason && (
+                            <div style={{background:'rgba(255,209,102,0.08)',border:'1px solid rgba(255,209,102,0.25)',borderRadius:8,padding:'10px 14px'}}>
+                              <div className="mono" style={{fontSize:'0.68rem',color:'#ffd166',marginBottom:5}}>💡 WHY THIS AD WINS</div>
+                              <div style={{fontSize:'0.82rem',color:'#ffd166',lineHeight:1.5}}>{ad._winning_reason}</div>
+                            </div>
+                          )}
+
+                          {/* Demographics */}
+                          {ad.demographic_distribution?.length > 0 && (
+                            <div style={{background:'#1a1a24',borderRadius:8,padding:'12px 14px'}}>
+                              <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10}}>👥 AUDIENCE DEMOGRAPHICS</div>
+                              {ad.demographic_distribution.slice(0,3).map((d,di)=>(
+                                <div key={di} style={{marginBottom:8}}>
+                                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'0.76rem',marginBottom:3}}>
+                                    <span style={{color:'#6b6b80'}}>{d.age} · {d.gender}</span>
+                                    <span style={{color:'#6c63ff',fontFamily:'DM Mono,monospace'}}>{parseFloat(d.percentage||0).toFixed(1)}%</span>
+                                  </div>
+                                  <div className="bar-track"><div className="bar-fill" style={{width:`${parseFloat(d.percentage||0)}%`}}></div></div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Action buttons */}
+                          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:'auto'}}>
+                            <button style={{width:'100%',padding:'10px',borderRadius:8,border:'none',cursor:'pointer',background:'linear-gradient(135deg,#7B2FBE,#00C4CC)',color:'white',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem'}} onClick={() => setPosterAd(ad)}>🎨 Create Canva Poster from This Ad</button>
+                            <div style={{display:'flex',gap:8}}>
+                              <button className="btn btn-primary" style={{flex:1,fontSize:'0.8rem'}} onClick={() => copyToPublish(ad)}>📋 Copy & Publish</button>
+                              <button className="btn btn-outline" style={{flex:1,fontSize:'0.8rem'}} onClick={() => { const n=encodeURIComponent(ad._competitor||''); window.open(`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=${n}&search_type=keyword_unordered`,'_blank'); }}>🔗 Ad Library</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
