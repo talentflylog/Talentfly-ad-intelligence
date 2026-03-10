@@ -1,22 +1,20 @@
 // pages/api/competitor-ads.js
-// Fetches REAL ads from Meta Ad Library API only.
-// NO fake/AI generated ads. Shows exact error if API is blocked.
+// Uses Apify's Facebook Ad Library Scraper to get REAL ads from India
+// Actor: curious_coder/facebook-ads-library-scraper (~$0.75/1000 ads)
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { competitors = [], country = 'IN', keyword } = req.body;
-  const META_TOKEN = process.env.META_ACCESS_TOKEN;
+  const APIFY_TOKEN = process.env.APIFY_API_TOKEN;
 
-  if (!META_TOKEN) {
+  if (!APIFY_TOKEN) {
     return res.status(200).json({
       ads: [], source: 'error', count: 0, api_blocked: true,
-      diagnosis: 'META_ACCESS_TOKEN is not set in Vercel environment variables.',
-      fix: 'Go to Vercel → Project Settings → Environment Variables → add META_ACCESS_TOKEN'
+      diagnosis: 'APIFY_API_TOKEN is not set in Vercel environment variables.',
+      fix: 'Go to Vercel → Project Settings → Environment Variables → add APIFY_API_TOKEN'
     });
   }
-
-  const fields = 'id,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_descriptions,ad_creative_link_titles,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,currency,demographic_distribution,estimated_audience_size,impressions,languages,page_id,page_name,publisher_platforms,spend,bylines';
 
   const searchTerms = keyword ? [keyword] : competitors.filter(Boolean);
   if (searchTerms.length === 0) return res.status(400).json({ error: 'No competitors or keyword provided' });
@@ -25,74 +23,105 @@ export default async function handler(req, res) {
   const errors = [];
 
   for (const term of searchTerms) {
-    const url = new URL('https://graph.facebook.com/v20.0/ads_archive');
-    url.searchParams.set('access_token', META_TOKEN);
-    url.searchParams.set('search_terms', term);
-    url.searchParams.set('ad_reached_countries', country);
-    url.searchParams.set('ad_active_status', 'ALL');
-    url.searchParams.set('fields', fields);
-    url.searchParams.set('limit', '20');
-
     try {
-      const resp = await fetch(url.toString());
-      const data = await resp.json();
+      // Build the Ad Library search URL for this competitor/keyword
+      const adLibraryUrl = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(term)}&search_type=keyword_unordered&media_type=all`;
 
-      if (data.error) {
-        errors.push({ term, code: data.error.code, type: data.error.type, message: data.error.message });
+      // Run Apify actor synchronously and get results directly
+      const apifyUrl = `https://api.apify.com/v2/acts/curious_coder~facebook-ads-library-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=60&memory=512`;
+
+      const apifyRes = await fetch(apifyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          searchTerm: term,
+          country: country,
+          adType: 'ALL',
+          adActiveStatus: 'ALL',
+          pageLimit: 3,
+          maxResults: 15,
+        })
+      });
+
+      if (!apifyRes.ok) {
+        const errText = await apifyRes.text();
+        errors.push({ term, message: `Apify HTTP ${apifyRes.status}: ${errText.slice(0, 200)}` });
         continue;
       }
 
-      const ads = data.data || [];
-      ads.forEach(ad => {
-        ad._search_term = term;
-        ad._source = 'live';
-        const matched = competitors.find(c =>
-          (ad.page_name || '').toLowerCase().includes(c.toLowerCase().split(' ')[0]) ||
-          c.toLowerCase().includes((ad.page_name || '').toLowerCase().split(' ')[0])
-        );
-        ad._competitor = matched || ad.page_name || term;
-      });
-      allAds.push(...ads);
+      const items = await apifyRes.json();
 
-      // Paginate up to 3 pages
-      let nextUrl = data.paging?.next;
-      let page = 1;
-      while (nextUrl && page < 3) {
-        const nr = await fetch(nextUrl);
-        const nd = await nr.json();
-        if (nd.error || !nd.data) break;
-        nd.data.forEach(ad => { ad._search_term = term; ad._source = 'live'; ad._competitor = ad.page_name || term; });
-        allAds.push(...nd.data);
-        nextUrl = nd.paging?.next;
-        page++;
+      if (!Array.isArray(items) || items.length === 0) {
+        errors.push({ term, message: 'No ads returned for this search term' });
+        continue;
       }
+
+      // Normalize Apify output to our internal format
+      items.forEach(item => {
+        const ad = {
+          id: item.adArchiveID || item.id || item.adId || String(Math.random()),
+          _competitor: competitors.find(c =>
+            (item.pageName || '').toLowerCase().includes(c.toLowerCase().split(' ')[0].toLowerCase())
+          ) || item.pageName || term,
+          _search_term: term,
+          _source: 'live',
+          page_name: item.pageName || item.page_name || term,
+          page_id: item.pageID || item.page_id || '',
+          ad_creative_bodies: item.adTextBody ? [item.adTextBody]
+            : item.snapshot?.body?.markup?.__html ? [item.snapshot.body.markup.__html.replace(/<[^>]+>/g, '')]
+            : item.bodyText ? [item.bodyText]
+            : item.text ? [item.text]
+            : [''],
+          ad_creative_link_titles: item.adCardTitle ? [item.adCardTitle]
+            : item.snapshot?.title ? [item.snapshot.title]
+            : item.title ? [item.title]
+            : [''],
+          ad_creative_link_captions: item.adCardCaption ? [item.adCardCaption]
+            : item.caption ? [item.caption]
+            : [''],
+          ad_creative_link_descriptions: item.adCardDescription ? [item.adCardDescription]
+            : item.description ? [item.description]
+            : [''],
+          ad_delivery_start_time: item.startDate || item.ad_delivery_start_time || item.startDateFormatted || '',
+          ad_delivery_stop_time: item.endDate || item.ad_delivery_stop_time || '',
+          ad_snapshot_url: item.adSnapshotUrl || item.snapshot_url || item.snapshotUrl
+            || `https://www.facebook.com/ads/library/?id=${item.adArchiveID || item.id || ''}`,
+          publisher_platforms: item.publisherPlatform || item.publisher_platforms || ['facebook'],
+          spend: item.spend || item.spendRange || null,
+          impressions: item.impressions || item.impressionRange || null,
+          demographic_distribution: item.demographicDistribution || item.demographic_distribution || [],
+          // Keep raw data for debugging
+          _raw: item,
+          // Image/video
+          _image_url: item.snapshot?.images?.[0]?.url || item.imageUrl || item.creative?.images?.[0] || null,
+          _video_url: item.snapshot?.videos?.[0]?.video_hd_url || item.videoUrl || null,
+          _cta: item.snapshot?.cta_text || item.ctaText || item.cta || null,
+          _link_url: item.snapshot?.link_url || item.linkUrl || item.destinationUrl || null,
+        };
+        allAds.push(ad);
+      });
+
     } catch (e) {
-      errors.push({ term, message: `Network error: ${e.message}` });
+      errors.push({ term, message: `Error: ${e.message}` });
     }
   }
 
-  if (allAds.length === 0 && errors.length > 0) {
-    const err = errors[0];
-    let diagnosis = err.message || 'Unknown error from Meta API';
-    let fix = '';
-
-    if (err.code === 200 || (err.message || '').toLowerCase().includes('permission')) {
-      diagnosis = `Permission denied (code ${err.code}): "${err.message}"`;
-      fix = 'Your app has ads_read but needs SEPARATE Ad Library API approval. Visit: https://www.facebook.com/ads/library/api and submit the access request form. Approval takes 24-72 hours.';
-    } else if (err.code === 190 || (err.message || '').toLowerCase().includes('token') || (err.message || '').toLowerCase().includes('expired')) {
-      diagnosis = `Token expired or invalid (code ${err.code}): "${err.message}"`;
-      fix = 'Generate a fresh token at https://developers.facebook.com/tools/explorer with ads_read scope, then update META_ACCESS_TOKEN in Vercel environment variables.';
-    } else if (err.code === 100) {
-      diagnosis = `Invalid parameter (code ${err.code}): "${err.message}"`;
-      fix = 'Make sure your Meta App has the Marketing API product added at developers.facebook.com.';
-    }
-
+  if (allAds.length === 0) {
     return res.status(200).json({
       ads: [], source: 'error', count: 0, api_blocked: true,
-      raw_error: err, diagnosis, fix,
-      token_preview: `${META_TOKEN.slice(0,12)}...${META_TOKEN.slice(-6)}`
+      errors,
+      diagnosis: errors[0]?.message || 'No ads found — Apify actor may have timed out or returned empty results.',
+      fix: errors[0]?.message?.includes('timeout')
+        ? 'The scraper timed out. Try fewer competitors at once or search by keyword instead.'
+        : 'Check that APIFY_API_TOKEN is correct in Vercel environment variables.',
+      token_preview: APIFY_TOKEN ? `${APIFY_TOKEN.slice(0, 12)}...${APIFY_TOKEN.slice(-6)}` : 'not set'
     });
   }
 
-  return res.status(200).json({ ads: allAds, source: 'live', count: allAds.length, partial_errors: errors.length > 0 ? errors : undefined });
+  return res.status(200).json({
+    ads: allAds,
+    source: 'live',
+    count: allAds.length,
+    partial_errors: errors.length > 0 ? errors : undefined,
+  });
 }

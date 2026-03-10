@@ -292,46 +292,54 @@ export default function Home() {
                       </div>
 
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:0}}>
-                        {/* LEFT: Ad Content + Direct Library Link */}
+                        {/* LEFT: REAL Ad Creative */}
                         <div style={{padding:20,borderRight:'1px solid #2a2a3a'}}>
-                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>📱 Ad Creative</div>
+                          <div className="mono" style={{fontSize:'0.68rem',color:'#6b6b80',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>📱 Real Ad Creative</div>
 
-                          {/* Simulated ad card */}
+                          {/* Real Facebook-style ad card */}
                           <div style={{background:'white',borderRadius:10,overflow:'hidden',boxShadow:'0 2px 16px rgba(0,0,0,0.4)',maxWidth:380,marginBottom:14}}>
                             <div style={{padding:'10px 14px',display:'flex',alignItems:'center',gap:8}}>
                               <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#6c63ff,#ff6584)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontWeight:800,fontSize:'0.8rem',flexShrink:0}}>{initials}</div>
                               <div style={{flex:1}}>
-                                <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.85rem'}}>{ad._competitor}</div>
+                                <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.85rem'}}>{ad.page_name || ad._competitor}</div>
                                 <div style={{color:'#65676b',fontSize:'0.7rem'}}>Sponsored · 🌐</div>
                               </div>
                             </div>
-                            <div style={{padding:'0 14px 10px',color:'#1c1e21',fontSize:'0.82rem',lineHeight:1.5,fontFamily:'system-ui,sans-serif'}}>{body}</div>
-                            <div style={{background:'linear-gradient(135deg,#1a0533,#0a1628)',minHeight:140,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'white',textAlign:'center',padding:16}}>
-                              <div style={{fontSize:'1.6rem',marginBottom:6}}>🎓</div>
-                              <div style={{fontWeight:800,fontSize:'0.95rem',lineHeight:1.3,fontFamily:'system-ui,sans-serif'}}>{headline}</div>
-                            </div>
-                            <div style={{background:'#f0f2f5',padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                              <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.8rem'}}>{headline.slice(0,35)}{headline.length>35?'...':''}</div>
-                              <div style={{background:'#e4e6eb',color:'#1c1e21',padding:'5px 10px',borderRadius:6,fontSize:'0.75rem',fontWeight:600,flexShrink:0,marginLeft:8}}>Learn More</div>
-                            </div>
+                            {body && <div style={{padding:'0 14px 10px',color:'#1c1e21',fontSize:'0.82rem',lineHeight:1.5,fontFamily:'system-ui,sans-serif'}}>{body}</div>}
+
+                            {/* REAL image if available, else video thumbnail, else placeholder */}
+                            {ad._video_url ? (
+                              <video controls style={{width:'100%',maxHeight:220,objectFit:'cover',display:'block'}} src={ad._video_url} />
+                            ) : ad._image_url ? (
+                              <img src={ad._image_url} alt="Ad creative" style={{width:'100%',maxHeight:220,objectFit:'cover',display:'block'}} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='flex'}} />
+                            ) : null}
+                            {/* Fallback if no image */}
+                            {!ad._image_url && !ad._video_url && (
+                              <div style={{background:'#f0f2f5',minHeight:100,display:'flex',alignItems:'center',justifyContent:'center',color:'#65676b',fontSize:'0.8rem',padding:16,textAlign:'center'}}>
+                                🖼 Image/video available on Facebook Ad Library
+                              </div>
+                            )}
+
+                            {(headline || ad._cta) && (
+                              <div style={{background:'#f0f2f5',padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                                <div>
+                                  {ad._link_url && <div style={{color:'#65676b',fontSize:'0.68rem',textTransform:'uppercase'}}>{(() => { try { return new URL(ad._link_url).hostname; } catch(e) { return ''; } })()}</div>}
+                                  {headline && <div style={{color:'#1c1e21',fontWeight:700,fontSize:'0.82rem'}}>{headline.slice(0,40)}{headline.length>40?'...':''}</div>}
+                                </div>
+                                {ad._cta && <div style={{background:'#e4e6eb',color:'#1c1e21',padding:'5px 10px',borderRadius:6,fontSize:'0.75rem',fontWeight:600,flexShrink:0,marginLeft:8}}>{ad._cta}</div>}
+                              </div>
+                            )}
                           </div>
 
-                          {/* View real ad button — uses snapshot_url if real, else searches by competitor name */}
-                          <a
-                            href={ad.ad_snapshot_url && ad.ad_snapshot_url !== '#'
+                          {/* View real ad on Facebook */}
+                          <a href={ad.ad_snapshot_url && ad.ad_snapshot_url !== '#'
                               ? ad.ad_snapshot_url
                               : `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=${encodeURIComponent(ad._competitor||'')}&search_type=keyword_unordered&media_type=all`}
-                            target="_blank"
-                            rel="noreferrer"
+                            target="_blank" rel="noreferrer"
                             style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'11px',borderRadius:8,background:'#1877F2',color:'white',textDecoration:'none',fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'0.85rem',width:'100%'}}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-                            {ad.ad_snapshot_url && ad.ad_snapshot_url !== '#' ? '👁 View This Exact Ad on Facebook' : '🔍 Search This Competitor on Ad Library'}
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                            👁 View This Ad on Facebook
                           </a>
-                          {ad._ai_generated && (
-                            <div style={{marginTop:8,padding:'7px 10px',background:'rgba(108,99,255,0.1)',border:'1px solid rgba(108,99,255,0.2)',borderRadius:6,fontSize:'0.72rem',color:'#a09fff',textAlign:'center'}}>
-                              🤖 AI-generated profile · Link opens Ad Library search for this competitor
-                            </div>
-                          )}
                         </div>
 
                         {/* RIGHT: Full Intelligence */}
