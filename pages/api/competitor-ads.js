@@ -1,6 +1,6 @@
 // pages/api/competitor-ads.js
-// Uses Apify Facebook Ad Library Scraper (scraper-engine actor)
-// Input: keywords or Ad Library URLs — works for India, all ad types
+// Primary:  igolaizola/facebook-ad-library-scraper  (keyword + country)
+// Fallback: leadsbrary/meta-ads-library-scraper     (keyword + country)
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   if (!APIFY_TOKEN) {
     return res.status(200).json({
       ads: [], source: 'error', count: 0, api_blocked: true,
-      diagnosis: 'APIFY_API_TOKEN is not set.',
+      diagnosis: 'APIFY_API_TOKEN is not set in Vercel environment variables.',
       fix: 'Go to Vercel → Settings → Environment Variables → add APIFY_API_TOKEN'
     });
   }
@@ -22,72 +22,65 @@ export default async function handler(req, res) {
   const allAds = [];
   const errors = [];
 
-  // curious_coder actor needs Ad Library URLs in the "urls" field
-  // We build the Ad Library search URL for each competitor/keyword
-  const urls = searchTerms.map(term =>
-    `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(term)}&search_type=keyword_unordered&media_type=all`
-  );
+  for (const term of searchTerms) {
+    let success = false;
 
-  try {
-    const apifyUrl = `https://api.apify.com/v2/acts/curious_coder~facebook-ads-library-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120&memory=1024`;
-
-    const apifyRes = await fetch(apifyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        urls: urls,
-        maxResults: 10,
-        country: country,
-      })
-    });
-
-    if (!apifyRes.ok) {
-      const errText = await apifyRes.text();
-      // If curious_coder fails, try scraper-engine actor as fallback
-      console.error('curious_coder failed:', errText);
-      throw new Error(`Actor error: ${errText.slice(0, 300)}`);
-    }
-
-    const items = await apifyRes.json();
-
-    if (Array.isArray(items) && items.length > 0) {
-      items.forEach(item => normalizeAndPush(item, competitors, searchTerms, allAds));
-    } else {
-      throw new Error('No ads returned from curious_coder actor');
-    }
-
-  } catch (primaryErr) {
-    errors.push({ actor: 'curious_coder', message: primaryErr.message });
-
-    // FALLBACK: Try scraper-engine actor which accepts keywords directly
+    // ── PRIMARY: igolaizola/facebook-ad-library-scraper ──────────────────
     try {
-      const fallbackUrl = `https://api.apify.com/v2/acts/scraper-engine~facebook-ads-library-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120&memory=1024`;
+      const r = await fetch(
+        `https://api.apify.com/v2/acts/igolaizola~facebook-ad-library-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=90&memory=512`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            searchQuery: term,
+            country:     country,
+            maxItems:    15,
+            category:    'ALL',
+            activeStatus: 'ALL',
+            proxyConfiguration: { useApifyProxy: true },
+          })
+        }
+      );
 
-      const fallbackRes = await fetch(fallbackUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: searchTerms,
-          country: country,
-          maxResults: 10,
-          sortBy: 'relevancy_monthly_grouped',
-        })
-      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const items = await r.json();
+      if (!Array.isArray(items) || items.length === 0) throw new Error('Empty result');
 
-      if (!fallbackRes.ok) {
-        const errText = await fallbackRes.text();
-        throw new Error(`Fallback actor error: ${errText.slice(0, 300)}`);
+      items.forEach(item => normalizeAndPush(item, competitors, term, allAds));
+      success = true;
+
+    } catch (e) {
+      errors.push({ term, actor: 'igolaizola', message: e.message });
+    }
+
+    // ── FALLBACK: leadsbrary/meta-ads-library-scraper ─────────────────────
+    if (!success) {
+      try {
+        const r = await fetch(
+          `https://api.apify.com/v2/acts/leadsbrary~meta-ads-library-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=90&memory=512`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              searchQuery: term,
+              country:     country,
+              maxResults:  15,
+              adStatus:    'ALL',
+            })
+          }
+        );
+
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+        const items = await r.json();
+        if (!Array.isArray(items) || items.length === 0) throw new Error('Empty result');
+
+        items.forEach(item => normalizeAndPush(item, competitors, term, allAds));
+        success = true;
+
+      } catch (e) {
+        errors.push({ term, actor: 'leadsbrary', message: e.message });
       }
-
-      const fallbackItems = await fallbackRes.json();
-      if (Array.isArray(fallbackItems) && fallbackItems.length > 0) {
-        fallbackItems.forEach(item => normalizeAndPush(item, competitors, searchTerms, allAds));
-      } else {
-        throw new Error('No ads returned from fallback actor');
-      }
-
-    } catch (fallbackErr) {
-      errors.push({ actor: 'scraper-engine', message: fallbackErr.message });
     }
   }
 
@@ -96,102 +89,86 @@ export default async function handler(req, res) {
       ads: [], source: 'error', count: 0, api_blocked: true,
       errors,
       diagnosis: errors.map(e => `[${e.actor}] ${e.message}`).join(' | '),
-      fix: 'The Apify scraper may have timed out. Try "Search by Keyword" with one competitor at a time, or check your Apify console at console.apify.com for run details.',
+      fix: 'Both Apify actors failed. Check console.apify.com to see run details. Try "Search by Keyword" with one term at a time.',
       token_preview: `${APIFY_TOKEN.slice(0, 12)}...${APIFY_TOKEN.slice(-6)}`
     });
   }
 
   return res.status(200).json({
-    ads: allAds,
+    ads:    allAds,
     source: 'live',
-    count: allAds.length,
-    partial_errors: errors.length > 0 ? errors : undefined,
+    count:  allAds.length,
+    partial_errors: errors.length ? errors : undefined,
   });
 }
 
-// Normalize any Apify actor output format to our internal ad schema
-function normalizeAndPush(item, competitors, searchTerms, allAds) {
-  // Try to match to a known competitor
-  const pageName = item.pageName || item.page_name || item.advertiserName || item.advertiser || '';
+// ── Normalise any Apify actor output into our internal ad schema ─────────────
+function normalizeAndPush(item, competitors, term, allAds) {
+  const pageName =
+    item.pageName || item.page_name || item.advertiserName ||
+    item.advertiser || item.pageInfo?.name || '';
+
   const matched = competitors.find(c =>
     pageName.toLowerCase().includes(c.toLowerCase().split(' ')[0].toLowerCase()) ||
     c.toLowerCase().includes(pageName.toLowerCase().split(' ')[0].toLowerCase())
-  ) || pageName || searchTerms[0] || 'Unknown';
+  ) || pageName || term;
 
-  // Extract body text — try multiple field names across different actors
+  // Body text — try every known field name
   const bodyText =
-    item.adTextBody ||
-    item.body ||
-    item.bodyText ||
-    item.text ||
-    item.ad_text ||
+    item.adTextBody || item.body || item.bodyText || item.text ||
+    item.ad_text || item.adText || item.description ||
     item.snapshot?.body?.markup?.__html?.replace(/<[^>]+>/g, '') ||
-    item.cards?.[0]?.body ||
-    '';
+    item.cards?.[0]?.body || '';
 
-  // Extract headline
+  // Headline
   const headline =
-    item.adCardTitle ||
-    item.title ||
-    item.headline ||
-    item.ad_title ||
-    item.snapshot?.title ||
-    item.cards?.[0]?.title ||
-    '';
+    item.adCardTitle || item.title || item.headline || item.ad_title ||
+    item.snapshot?.title || item.cards?.[0]?.title || '';
 
-  // Extract snapshot/library URL
+  // Snapshot / Ad Library URL
   const snapshotUrl =
-    item.adSnapshotUrl ||
-    item.snapshot_url ||
-    item.snapshotUrl ||
-    item.libraryUrl ||
-    item.ad_snapshot_url ||
+    item.adSnapshotUrl || item.snapshot_url || item.snapshotUrl ||
+    item.libraryUrl || item.ad_snapshot_url || item.adLibraryUrl ||
     (item.adArchiveID ? `https://www.facebook.com/ads/library/?id=${item.adArchiveID}` : '') ||
-    (item.id ? `https://www.facebook.com/ads/library/?id=${item.id}` : '') ||
+    (item.id          ? `https://www.facebook.com/ads/library/?id=${item.id}`          : '') ||
     '';
 
-  // Extract image
+  // Image
   const imageUrl =
-    item.imageUrl ||
-    item.image_url ||
-    item.snapshot?.images?.[0]?.url ||
-    item.snapshot?.images?.[0] ||
+    item.imageUrl || item.image_url ||
+    item.snapshot?.images?.[0]?.url || item.snapshot?.images?.[0] ||
     item.creative?.images?.[0]?.url ||
-    item.cards?.[0]?.imageUrl ||
-    item.thumbnailUrl ||
-    null;
+    item.cards?.[0]?.imageUrl || item.thumbnailUrl ||
+    item.images?.[0] || null;
 
-  // Extract video
+  // Video
   const videoUrl =
-    item.videoUrl ||
-    item.video_url ||
+    item.videoUrl || item.video_url ||
     item.snapshot?.videos?.[0]?.video_hd_url ||
     item.snapshot?.videos?.[0]?.video_sd_url ||
     item.creative?.videos?.[0]?.url ||
-    null;
+    item.videos?.[0] || null;
 
-  const ad = {
+  allAds.push({
     id: item.adArchiveID || item.id || item.adId || String(Math.random()),
-    _competitor: matched,
-    _source: 'live',
-    page_name: pageName,
-    page_id: item.pageID || item.page_id || item.pageId || '',
-    ad_creative_bodies: bodyText ? [bodyText] : [''],
-    ad_creative_link_titles: headline ? [headline] : [''],
-    ad_creative_link_captions: item.caption ? [item.caption] : item.adCardCaption ? [item.adCardCaption] : [''],
-    ad_delivery_start_time: item.startDate || item.start_date || item.createdAt || item.ad_delivery_start_time || '',
-    ad_delivery_stop_time: item.endDate || item.end_date || item.ad_delivery_stop_time || '',
-    ad_snapshot_url: snapshotUrl,
-    publisher_platforms: item.publisherPlatform || item.publisher_platforms || item.platforms || ['facebook'],
-    spend: item.spend || item.spendRange || item.estimatedSpend || null,
-    impressions: item.impressions || item.impressionRange || null,
+    _competitor:  matched,
+    _source:      'live',
+    page_name:    pageName,
+    page_id:      item.pageID || item.page_id || item.pageId || '',
+    ad_creative_bodies:      bodyText  ? [bodyText]  : [''],
+    ad_creative_link_titles: headline  ? [headline]  : [''],
+    ad_creative_link_captions: item.caption || item.adCardCaption ? [item.caption || item.adCardCaption] : [''],
+    ad_delivery_start_time:  item.startDate  || item.start_date  || item.createdAt || '',
+    ad_delivery_stop_time:   item.endDate    || item.end_date    || '',
+    ad_snapshot_url:         snapshotUrl,
+    publisher_platforms:     item.publisherPlatform || item.publisher_platforms || item.platforms || ['facebook'],
+    spend:                   item.spend || item.spendRange || item.estimatedSpend || null,
+    impressions:             item.impressions || item.impressionRange || null,
     demographic_distribution: item.demographicDistribution || item.demographic_distribution || [],
     _image_url: imageUrl,
     _video_url: videoUrl,
-    _cta: item.ctaText || item.cta || item.snapshot?.cta_text || null,
-    _link_url: item.linkUrl || item.destinationUrl || item.snapshot?.link_url || null,
-    _raw: item,
-  };
-
-  allAds.push(ad);
+    _cta:       item.ctaText  || item.cta  || item.snapshot?.cta_text  || null,
+    _link_url:  item.linkUrl  || item.destinationUrl || item.snapshot?.link_url || null,
+    _raw:       item,
+  });
 }
