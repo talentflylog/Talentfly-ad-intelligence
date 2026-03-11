@@ -1,11 +1,11 @@
 // pages/api/competitor-ads.js
-// Actor: curious_coder/facebook-ads-library-scraper (XtaWFhbtfxyzqrFmd)
-// Input: urls[] — Ad Library search URLs
+// Actor: XtaWFhbtfxyzqrFmd (curious_coder/facebook-ads-library-scraper)
+// Uses exact input schema from Apify docs
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { competitors = [], country = 'IN', keyword } = req.body;
+  const { competitorUrls = [], country = 'IN' } = req.body;
   const APIFY_TOKEN = process.env.APIFY_API_TOKEN;
 
   if (!APIFY_TOKEN) {
@@ -16,40 +16,79 @@ export default async function handler(req, res) {
     });
   }
 
-  const searchTerms = keyword ? [keyword] : competitors.filter(Boolean);
-  if (!searchTerms.length) return res.status(400).json({ error: 'No search terms' });
+  if (!competitorUrls.length) {
+    return res.status(400).json({ error: 'No competitor URLs provided' });
+  }
 
-  // Build exact Ad Library URLs like the ones shown in the Apify input form
-  const urls = searchTerms.map(term => ({
-    url: `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&q=${encodeURIComponent(term)}&search_type=keyword_unordered&media_type=all`
-  }));
+  // Build input exactly as shown in Apify docs
+  const input = {
+    urls: competitorUrls.map(u => ({ url: u })),
+    count: 20,
+    "scrapePageAds.period": "",
+    "scrapePageAds.activeStatus": "all",
+    "scrapePageAds.sortBy": "impressions_desc",
+    "scrapePageAds.countryCode": country,
+  };
 
   try {
-    const apifyRes = await fetch(
-      `https://api.apify.com/v2/acts/XtaWFhbtfxyzqrFmd/run-sync-get-dataset-items?token=${APIFY_TOKEN}&timeout=120&memory=1024`,
+    // Step 1: Start the actor run
+    const startRes = await fetch(
+      `https://api.apify.com/v2/acts/XtaWFhbtfxyzqrFmd/runs?token=${APIFY_TOKEN}&memory=1024`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls })
+        body: JSON.stringify(input)
       }
     );
 
-    if (!apifyRes.ok) {
-      const errText = await apifyRes.text();
-      throw new Error(`Apify HTTP ${apifyRes.status}: ${errText.slice(0, 400)}`);
+    if (!startRes.ok) {
+      const errText = await startRes.text();
+      throw new Error(`Failed to start actor: HTTP ${startRes.status} — ${errText.slice(0, 300)}`);
     }
 
-    const items = await apifyRes.json();
+    const runData = await startRes.json();
+    const runId = runData.data?.id;
+    const datasetId = runData.data?.defaultDatasetId;
+
+    if (!runId) throw new Error('No run ID returned from Apify');
+
+    // Step 2: Poll until finished (max 90s)
+    let status = 'RUNNING';
+    let attempts = 0;
+    while (status === 'RUNNING' || status === 'READY' || status === 'TIMING-OUT') {
+      await new Promise(r => setTimeout(r, 4000));
+      attempts++;
+      if (attempts > 22) throw new Error('Actor run timed out after 90s. Try fewer URLs or use Search by Keyword.');
+
+      const statusRes = await fetch(
+        `https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`
+      );
+      const statusData = await statusRes.json();
+      status = statusData.data?.status;
+
+      if (status === 'FAILED' || status === 'ABORTED') {
+        throw new Error(`Actor run ${status}. Check console.apify.com for logs.`);
+      }
+    }
+
+    // Step 3: Fetch results from dataset
+    const dataRes = await fetch(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&limit=100`
+    );
+
+    if (!dataRes.ok) throw new Error(`Failed to fetch dataset: HTTP ${dataRes.status}`);
+
+    const items = await dataRes.json();
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(200).json({
         ads: [], source: 'error', count: 0, api_blocked: true,
-        diagnosis: 'Apify returned no results. These competitors may not have active ads, or try a different keyword.',
-        fix: 'Try "Search by Keyword" with a broader term like "coaching Kerala" or "logistics institute India".'
+        diagnosis: 'Actor ran successfully but returned no ads.',
+        fix: 'These pages may not have active ads. Try different competitor URLs or check the Ad Library manually.'
       });
     }
 
-    const allAds = items.map(item => normalize(item, competitors, searchTerms));
+    const allAds = items.map(item => normalize(item, competitorUrls));
 
     return res.status(200).json({ ads: allAds, source: 'live', count: allAds.length });
 
@@ -57,23 +96,18 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ads: [], source: 'error', count: 0, api_blocked: true,
       diagnosis: e.message,
-      fix: e.message.includes('timeout')
-        ? 'Timed out — try fewer competitors or use "Search by Keyword" with one term.'
-        : 'Check console.apify.com for run logs.',
+      fix: e.message.includes('timeout') || e.message.includes('timed out')
+        ? 'Try one competitor URL at a time, or reduce count to 10.'
+        : 'Check console.apify.com → Runs for detailed error logs.',
       token_preview: `${APIFY_TOKEN.slice(0, 12)}...${APIFY_TOKEN.slice(-6)}`
     });
   }
 }
 
-function normalize(item, competitors, searchTerms) {
+function normalize(item, competitorUrls) {
   const pageName =
-    item.pageName || item.page_name || item.advertiserName || item.advertiser ||
-    item.pageInfo?.name || '';
-
-  const matched = competitors.find(c =>
-    pageName.toLowerCase().includes(c.toLowerCase().split(' ')[0].toLowerCase()) ||
-    c.toLowerCase().includes(pageName.toLowerCase().split(' ')[0].toLowerCase())
-  ) || pageName || searchTerms[0] || 'Unknown';
+    item.pageName || item.page_name || item.advertiserName ||
+    item.advertiser || item.pageInfo?.name || '';
 
   const bodyText =
     item.adTextBody || item.body || item.bodyText || item.text || item.adText ||
@@ -85,7 +119,7 @@ function normalize(item, competitors, searchTerms) {
     item.snapshot?.title || item.cards?.[0]?.title || '';
 
   const snapshotUrl =
-    item.adSnapshotUrl || item.snapshot_url || item.snapshotUrl || item.ad_snapshot_url ||
+    item.adSnapshotUrl || item.snapshot_url || item.snapshotUrl ||
     (item.adArchiveID ? `https://www.facebook.com/ads/library/?id=${item.adArchiveID}` : '') ||
     (item.id ? `https://www.facebook.com/ads/library/?id=${item.id}` : '') || '';
 
@@ -102,7 +136,7 @@ function normalize(item, competitors, searchTerms) {
 
   return {
     id: item.adArchiveID || item.id || item.adId || String(Math.random()),
-    _competitor: matched,
+    _competitor: pageName || 'Unknown',
     _source: 'live',
     page_name: pageName,
     page_id: item.pageID || item.page_id || item.pageId || '',

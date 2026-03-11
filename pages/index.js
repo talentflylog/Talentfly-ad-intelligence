@@ -45,30 +45,31 @@ export default function Home() {
   const addLog = (msg, type = 'info') => setLogs(l => [...l, { msg, type, time: new Date().toLocaleTimeString() }]);
 
   // ---- FETCH ADS ----
-  const fetchAds = async (useKeyword = false) => {
+  const fetchAds = async () => {
     setLoading(true); setLogs([]); setAds([]); setApiError(null);
-    addLog(useKeyword ? `Keyword search: "${keyword}"` : 'Fetching competitor ads from Meta Ad Library...', 'info');
+    const urls = competitors.split('\n').map(u => u.trim()).filter(u => u.startsWith('http'));
+    if (!urls.length) {
+      addLog('❌ Please paste at least one Facebook Ad Library URL', 'error');
+      setLoading(false);
+      return;
+    }
+    addLog(`Fetching ads from ${urls.length} competitor URL(s)...`, 'info');
     try {
       const res = await fetch('/api/competitor-ads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          competitors: useKeyword ? [] : competitors.split('\n').filter(Boolean),
-          keyword: useKeyword ? keyword : undefined,
-          country
-        })
+        body: JSON.stringify({ competitorUrls: urls, country })
       });
       const data = await res.json();
       if (data.api_blocked) {
         setApiError(data);
-        addLog(`❌ Meta API blocked: ${data.raw_error?.message || data.diagnosis}`, 'error');
+        addLog(`❌ ${data.diagnosis}`, 'error');
         return;
       }
       if (data.error) { addLog(`Error: ${data.error}`, 'error'); return; }
       setAds(data.ads || []);
       setSource(data.source);
-      addLog(`✅ ${data.count} REAL ads loaded from Meta Ad Library`, 'success');
-      if (data.partial_errors?.length) addLog(`⚠️ ${data.partial_errors.length} searches had errors`, 'warn');
+      addLog(`✅ ${data.count} real ads fetched from Meta Ad Library`, 'success');
       setTimeout(() => adsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (e) { addLog(`Error: ${e.message}`, 'error'); }
     finally { setLoading(false); }
@@ -187,20 +188,20 @@ export default function Home() {
         {tab === 'research' && (
           <div>
             <div className="card">
-              <div className="syne" style={{fontWeight:700,marginBottom:16,display:'flex',alignItems:'center',gap:8}}><span style={{width:8,height:8,borderRadius:'50%',background:'#6c63ff',display:'inline-block'}}></span>Competitor Ad Library Search</div>
-              <div className="grid2" style={{marginBottom:14}}>
-                <div className="fg"><label>Search Keywords</label><input value={keyword} onChange={e=>setKeyword(e.target.value)} /></div>
-                <div className="fg"><label>Country</label>
-                  <select value={country} onChange={e=>setCountry(e.target.value)}>
-                    <option value="IN">India (IN)</option><option value="AE">UAE (AE)</option><option value="US">USA (US)</option>
-                  </select>
+              <div className="syne" style={{fontWeight:700,marginBottom:16,display:'flex',alignItems:'center',gap:8}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'#6c63ff',display:'inline-block'}}></span>
+                Competitor Ad Library Search
+              </div>
+              <div className="fg">
+                <label>Competitor Ad Library URLs (one per line)</label>
+                <textarea rows={6} value={competitors} onChange={e=>setCompetitors(e.target.value)}
+                  placeholder={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=Reliant+Institute+of+Logistics&search_type=keyword_unordered&media_type=all\nhttps://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=IN&q=Blitz+Academy&search_type=keyword_unordered&media_type=all`} />
+                <div style={{marginTop:6,fontSize:'0.76rem',color:'#6b6b80',lineHeight:1.5}}>
+                  💡 Go to <a href="https://www.facebook.com/ads/library" target="_blank" rel="noreferrer" style={{color:'#6c63ff'}}>facebook.com/ads/library</a> → search each competitor → copy the URL and paste here
                 </div>
               </div>
-              <div className="fg"><label>Competitor Page Names (one per line)</label>
-                <textarea rows={5} value={competitors} onChange={e=>setCompetitors(e.target.value)} /></div>
               <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-                <button className="btn btn-primary" onClick={() => fetchAds(false)} disabled={loading}>🔍 Fetch All Competitor Ads</button>
-                <button className="btn btn-outline" onClick={() => fetchAds(true)} disabled={loading}>🌐 Search by Keyword</button>
+                <button className="btn btn-primary" onClick={() => fetchAds()} disabled={loading}>🔍 Fetch Competitor Ads</button>
               </div>
             </div>
 
